@@ -1,3 +1,7 @@
+# This code implements a Physics-Informed Neural Network (PINN) to solve a 2D linear elasticity problem using TensorFlow and Keras.
+# Important feature of this version: 
+# 1)residue points are inside the training loop, so they are re-sampled at each iteration.
+# 2) There is no crack yet in this verision
 import tensorflow as tf
 from tensorflow import keras
 import numpy as np

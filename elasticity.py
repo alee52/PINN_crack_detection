@@ -1,3 +1,7 @@
+# This code implements a Physics-Informed Neural Network (PINN) to solve a 2D linear elasticity problem using TensorFlow and Keras.
+# Important feature of this version: 
+# 1)residue points are inside the training loop, so they are re-sampled at each iteration.
+# 2) There is no crack yet in this verision
 import tensorflow as tf
 from tensorflow import keras
 import numpy as np
@@ -231,10 +235,16 @@ def sample_boundary_Neumann(n, lb, ub):
 optimizer = tf.keras.optimizers.Adam(1e-3)
 
 @tf.function
-def train_step_pinn(nf=2048, nb=512, w_phys=1.0, w_bnd_D=1.0, w_bnd_N=1.0, Xu=None, Yu=None, w_data=0.0):
+def train_step_pinn(nf=100, nb=25, w_phys=1.0, w_bnd_D=1.0, w_bnd_N=1.0, Xu=None, Yu=None, w_data=0.0):
     Xf = sample_interior(nf, lb, ub)
     Xb_Dirichlet = sample_boundary_Dirichlet(nb, lb, ub)
     Xb_Neumann = sample_boundary_Neumann(nb, lb, ub)
+
+    print("this is the shape of Xf:", Xf.shape)
+    print("this is the shape of Xf:", Xb_Dirichlet.shape)
+    print("this is the shape of Xf:", Xb_Neumann.shape)
+
+
 
     with tf.GradientTape() as tape:
         # physics loss (interior)
@@ -257,13 +267,14 @@ def train_step_pinn(nf=2048, nb=512, w_phys=1.0, w_bnd_D=1.0, w_bnd_N=1.0, Xu=No
 
         loss = w_phys*loss_phys + w_bnd_D*loss_bnd_Dirichlet + w_data*loss_data + w_bnd_N*loss_bnd_Neumann
 
+
     grads = tape.gradient(loss, pinn.trainable_variables)
     optimizer.apply_gradients(zip(grads, pinn.trainable_variables))
     return loss, loss_phys, loss_bnd_Dirichlet, loss_bnd_Neumann ,loss_data
 
 for epoch in range(5000):
     loss, lp, lbDirichlet, lbNeumann, ld = train_step_pinn()
-    if (epoch+1) % 200 == 0:
+    if (epoch+1) % 2 == 0:
         print(f"epoch {epoch+1:04d} | total {loss:.3e} | phys {lp:.3e} | bndDir {lbDirichlet:.3e} | bndNeu {lbNeumann:.3e} | data {ld:.3e}")
 
 X_test = np.linspace(0.0, 1.0, 100)

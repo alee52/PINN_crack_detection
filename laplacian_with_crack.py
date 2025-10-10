@@ -1,3 +1,7 @@
+# This code implements a Physics-Informed Neural Network (PINN) to solve a 2D linear elasticity problem using TensorFlow and Keras.
+# Important feature of this version: 
+
+
 import tensorflow as tf
 from tensorflow import keras
 import numpy as np
@@ -17,12 +21,8 @@ from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 class PhysicsInformedNN(tf.keras.Model):
     def __init__(self, layers, lb, ub):
         super(PhysicsInformedNN, self).__init__()
-        self.x_lb = lb[0]
-        self.y_lb = lb[1]
-        self.x_ub = ub[0]
-        self.y_ub = ub[1]
-        self.ub = ub
         self.lb = lb
+        self.ub = ub
         
         # build dense layers
         self.hidden = []
@@ -30,12 +30,10 @@ class PhysicsInformedNN(tf.keras.Model):
             self.hidden.append(tf.keras.layers.Dense(width, activation="tanh"))
         self.out = tf.keras.layers.Dense(layers[-1])
 
-        init_alpha = tf.keras.initializers.RandomNormal(mean=0.0, stddev=0.05)
-        init_beta  = tf.keras.initializers.Constant([0.5 * (self.x_lb + self.x_ub), 0.5 * (self.y_lb + self.y_ub)]
-)
+        #custom trainable parameters
+        self.left_end = tf.Variable(1.0, trainable=True, dtype=tf.float32, name='left_end')
+        self.right_end = tf.Variable(1.0, trainable=True, dtype=tf.float32, name='right_end')
 
-        self.alpha = tf.Variable(init_alpha(shape=()), trainable=True, dtype=tf.float32, name="alpha")
-        self.beta  = tf.Variable(init_beta(shape=()), trainable=True, dtype=tf.float32, name="beta")
 
     def call(self, X):
         Z = X
@@ -109,6 +107,7 @@ def true_normal_flux_top_side(X):
     flux =-np.pi * tf.sin(np.pi * x)
     return flux
 
+
 def sample_interior(n, lb, ub):
     eps = 1e-6
     X = tf.random.uniform((n, 2), lb, ub, dtype=tf.float32)
@@ -134,23 +133,15 @@ def sample_boundary_Neumann(n_sample_point, lb, ub):
     top    = tf.concat([x0 + (x1-x0)*s, tf.fill((n_sample_point,1), y1)], axis=1)
     return top
 
-def sample_crack(n_sample_point, left_end, right_end):
-    s = tf.random.uniform((n_sample_point, 1), 0.0, 1.0)
-    # x in [lb_x, ub_x], y in [lb_y, ub_y]
-    x0, x1 = left_end[0], right_end[0]
-    y0, y1 = left_end[1], right_end[1]
-
-    crack_points = tf.concat([x0 + (x1-x0)*s, y0 + (y1-y0)*s], axis=1)
-    return crack_points
-
 optimizer = tf.keras.optimizers.Adam(1e-3)
 
+Xf = sample_interior(nf, lb, ub)
+Xb_Dirichlet = sample_boundary_Dirichlet(nb, lb, ub)
+Xb_Neumann = sample_boundary_Neumann(nb, lb, ub)
+
+
 @tf.function
-def train_step_pinn(nf=2048, nb=512,nc = 100 ,w_phys=1.0, w_bnd_D=1.0, w_bnd_N=1.0, Xu=None, Yu=None, w_data=0.0):
-    Xf = sample_interior(nf, lb, ub)
-    Xb_Dirichlet = sample_boundary_Dirichlet(nb, lb, ub)
-    Xb_Neumann = sample_boundary_Neumann(nb, lb, ub)
-    # Xb_crack = sample_crack(nc, left_end, right_end)
+def train_step_pinn(Xf, Xb_Dirichlet, Xb_Neumann, w_phys=1.0, w_bnd_D=1.0, w_bnd_N=1.0, Xu=None, Yu=None, w_data=0.0):
 
     with tf.GradientTape() as tape:
         # physics loss (interior)
@@ -177,29 +168,28 @@ def train_step_pinn(nf=2048, nb=512,nc = 100 ,w_phys=1.0, w_bnd_D=1.0, w_bnd_N=1
     optimizer.apply_gradients(zip(grads, pinn.trainable_variables))
     return loss, loss_phys, loss_bnd_Dirichlet, loss_bnd_Neumann ,loss_data
 
+for epoch in range(20000):
+    loss, lp, lbDirichlet, lbNeumann, ld = train_step_pinn()
+    if (epoch+1) % 200 == 0:
+        print(f"epoch {epoch+1:04d} | total {loss:.3e} | phys {lp:.3e} | bndDir {lbDirichlet:.3e} | bndNeu {lbNeumann:.3e} | data {ld:.3e}")
 
-# for epoch in range(20000):
-#     loss, lp, lbDirichlet, lbNeumann, ld = train_step_pinn()
-#     if (epoch+1) % 200 == 0:
-#         print(f"epoch {epoch+1:04d} | total {loss:.3e} | phys {lp:.3e} | bndDir {lbDirichlet:.3e} | bndNeu {lbNeumann:.3e} | data {ld:.3e}")
+X_test = np.linspace(0.0, 1.0, 100)
+Y_test = np.linspace(0.0, 1.0, 100)
+X, Y = np.meshgrid(X_test, Y_test)
+X_star = np.column_stack((X.ravel(), Y.ravel())).astype(np.float32)
+u_start = true_solution(X_star)
+u_pred = pinn(X_star)
+u_diff = np.abs(u_start - u_pred)
 
-# X_test = np.linspace(0.0, 1.0, 100)
-# Y_test = np.linspace(0.0, 1.0, 100)
-# X, Y = np.meshgrid(X_test, Y_test)
-# X_star = np.column_stack((X.ravel(), Y.ravel())).astype(np.float32)
-# u_start = true_solution(X_star)
-# u_pred = pinn(X_star)
-# u_diff = np.abs(u_start - u_pred)
-
-# testing_error = np.linalg.norm(u_start - u_pred,2) / np.linalg.norm(u_start,2)
-# print(f"Testing Error: {testing_error:.3e}")
+testing_error = np.linalg.norm(u_start - u_pred,2) / np.linalg.norm(u_start,2)
+print(f"Testing Error: {testing_error:.3e}")
 
 
-# fig = plt.figure()
-# ax = fig.add_subplot(111, projection="3d")
-# ax.plot_surface(X_star[:,0],X_star[:,1], Y, u_diff, rstride=1, cstride=1, linewidth=0, antialiased=True)
-# ax.set_title("|u_true - u_pred| surface")
-# ax.set_xlabel("x"); ax.set_ylabel("y"); ax.set_zlabel("|diff|")
-# plt.show()
+fig = plt.figure()
+ax = fig.add_subplot(111, projection="3d")
+ax.plot_surface(X_star[:,0],X_star[:,1], Y, u_diff, rstride=1, cstride=1, linewidth=0, antialiased=True)
+ax.set_title("|u_true - u_pred| surface")
+ax.set_xlabel("x"); ax.set_ylabel("y"); ax.set_zlabel("|diff|")
+plt.show()
 
 
