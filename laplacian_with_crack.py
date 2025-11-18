@@ -18,6 +18,15 @@ from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 # np.random.seed(1234)
 # tf.random.set_seed(1234)
 
+
+# def initialize_interface_points(n_interface_point = 50,left_end_init = [0.3,0.3], right_end_init = [0.5,0.5]):
+#     s = tf.random.uniform((n_interface_point, 1), 0.0, 1.0)
+#     x0, x1 = left_end_init[0], right_end_init[0]
+#     y0, y1 = left_end_init[1], right_end_init[1]
+#     n_interface_point = tf.concat([x0 + (x1-x0)*s, y0 + (y1-y0)*s], axis=1)
+#     return n_interface_point
+
+
 class PhysicsInformedNN(tf.keras.Model):
     def __init__(self, layers, lb, ub):
         super(PhysicsInformedNN, self).__init__()
@@ -30,11 +39,13 @@ class PhysicsInformedNN(tf.keras.Model):
             self.hidden.append(tf.keras.layers.Dense(width, activation="tanh"))
         self.out = tf.keras.layers.Dense(layers[-1])
 
-        #custom trainable parameters
-        self.left_end = tf.Variable(1.0, trainable=True, dtype=tf.float32, name='left_end')
-        self.right_end = tf.Variable(1.0, trainable=True, dtype=tf.float32, name='right_end')
-
-
+        #trainable crack
+        X_trainable = tf.Variable(
+            tf.random.uniform((N_points, 2), minval=0.3, maxval=0.5, dtype=tf.float32),
+            trainable=True,
+            dtype=tf.float32,
+            name="trainable_points"
+            )
     def call(self, X):
         Z = X
         for layer in self.hidden:
@@ -42,11 +53,11 @@ class PhysicsInformedNN(tf.keras.Model):
         return self.out(Z)
     
 #initialize neural network
-lb = tf.constant([0.0, 0.0], dtype=tf.float32)  # lower bounds
-ub = tf.constant([1.0, 1.0], dtype=tf.float32)  # upper bounds
+lower_bound = tf.constant([0.0, 0.0], dtype=tf.float32)  # lower bounds
+upper_bound = tf.constant([1.0, 1.0], dtype=tf.float32)  # upper bounds
 layers = [20, 20, 20, 1]  # hidden sizes and output dim
 
-pinn = PhysicsInformedNN(layers, lb, ub)
+pinn = PhysicsInformedNN(layers, lower_bound, upper_bound)
 
 # Training step
 optimizer = tf.keras.optimizers.Adam()
@@ -107,6 +118,9 @@ def true_normal_flux_top_side(X):
     flux =-np.pi * tf.sin(np.pi * x)
     return flux
 
+def zero_flux_crack(X):
+
+#sampling points
 
 def sample_interior(n, lb, ub):
     eps = 1e-6
@@ -134,10 +148,11 @@ def sample_boundary_Neumann(n_sample_point, lb, ub):
     return top
 
 optimizer = tf.keras.optimizers.Adam(1e-3)
-
-Xf = sample_interior(nf, lb, ub)
-Xb_Dirichlet = sample_boundary_Dirichlet(nb, lb, ub)
-Xb_Neumann = sample_boundary_Neumann(nb, lb, ub)
+n_interior_point=2048
+n_boudary_point=512
+Xf = sample_interior(n_interior_point, lower_bound, upper_bound)
+Xb_Dirichlet = sample_boundary_Dirichlet(n_boudary_point, lower_bound, upper_bound)
+Xb_Neumann = sample_boundary_Neumann(n_boudary_point, lower_bound, upper_bound)
 
 
 @tf.function
@@ -169,7 +184,7 @@ def train_step_pinn(Xf, Xb_Dirichlet, Xb_Neumann, w_phys=1.0, w_bnd_D=1.0, w_bnd
     return loss, loss_phys, loss_bnd_Dirichlet, loss_bnd_Neumann ,loss_data
 
 for epoch in range(20000):
-    loss, lp, lbDirichlet, lbNeumann, ld = train_step_pinn()
+    loss, lp, lbDirichlet, lbNeumann, ld = train_step_pinn(Xf, Xb_Dirichlet, Xb_Neumann)
     if (epoch+1) % 200 == 0:
         print(f"epoch {epoch+1:04d} | total {loss:.3e} | phys {lp:.3e} | bndDir {lbDirichlet:.3e} | bndNeu {lbNeumann:.3e} | data {ld:.3e}")
 
