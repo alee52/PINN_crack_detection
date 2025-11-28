@@ -19,6 +19,51 @@ from mpl_toolkits.mplot3d import Axes3D
 # tf.random.set_seed(1234)
 
 
+
+# ============================ Load MATLAB data ============================#
+from scipy.io import loadmat
+
+path = "/Users/arumlee/Desktop/matlab_code_dislocations 2/Gsub.mat"
+data = loadmat(path)
+Test_data = data['Gsub']   #shape (N,3)
+X_test = Test_data[:,0]    
+Y_test = Test_data[:,1]
+U1_test = Test_data[:,2]  
+U2_test = Test_data[:,3]    
+
+# Plot test data points
+plt.figure(figsize=(5,5))
+plt.scatter(X_test, Y_test, c='b', marker='o', s=1)
+plt.title('Test data points')
+plt.xlabel('x')
+plt.ylabel('y')
+plt.show(block = False)
+
+# ---- 3D scatter plots of U1 and U2 ----
+fig = plt.figure(figsize=(14,6))
+
+ax1 = fig.add_subplot(121, projection='3d')
+ax1.scatter(X_test, Y_test, U1_test, c=U1_test, cmap='coolwarm', s=5)
+ax1.set_xlabel('X')
+ax1.set_ylabel('Y')
+ax1.set_zlabel('U1')
+ax1.set_title('3D map of U1(X, Y)')
+
+ax2 = fig.add_subplot(122, projection='3d')
+ax2.scatter(X_test, Y_test, U2_test, c=U2_test, cmap='coolwarm', s=5)
+ax2.set_xlabel('X')
+ax2.set_ylabel('Y')
+ax2.set_zlabel('U2')
+ax2.set_title('3D map of U2(X, Y)')
+
+plt.tight_layout()
+plt.show(block = False)
+
+
+
+
+
+
 #============================Domain description============================#
 crack_left_end = [-0.4, 0.0]
 crack_right_end = [0.4, 0.0]
@@ -88,46 +133,77 @@ class CrackLine:
         return inside
 
     def sample_crack(self,n_points_horizontal = 100, n_points_vertical = 25, n_points_corner = 20 ,dtype=tf.float32):
-        #sample on horizontal edge (crack)
+        #sample on horizontal upper edge
         edgeUpSample = tf.stack([tf.linspace(self.left, self.right, n_points_horizontal, name=None),
                       tf.fill([n_points_horizontal], tf.cast(self.up, dtype))], axis=1)
+        normal_vec = tf.constant([0.0, 1.0], dtype=edgeUpSample.dtype)
+        N = tf.shape(edgeUpSample)[0]
+        normal_up = tf.tile(normal_vec[None, :], [N, 1])
+        edgeUp_with_normals = tf.concat([edgeUpSample, normal_up], axis=1)
+
+        #sample on horizontal lower edge
         edgeDownSample = tf.stack([tf.linspace(self.left, self.right, n_points_horizontal, name=None),
                       tf.fill([n_points_horizontal], tf.cast(self.down, dtype))], axis=1)
+        normal_vec_down = tf.constant([0.0, -1.0], dtype=edgeDownSample.dtype)
+        normal_down = tf.tile(normal_vec_down[None, :], [tf.shape(edgeDownSample)[0], 1])
+        edgeDown_with_normals = tf.concat([edgeDownSample, normal_down], axis=1)
+        
+        #sample on vertical left edge
         edgeLeftSample = tf.stack([tf.fill([n_points_vertical], tf.cast(self.left - self.radius, dtype)),
                       tf.linspace(self.down + self.radius,self.up - self.radius,n_points_vertical, name=None)], axis=1)
+        normal_vec_left = tf.constant([-1.0, 0.0], dtype=edgeLeftSample.dtype)
+        normal_left = tf.tile(normal_vec_left[None, :], [tf.shape(edgeLeftSample)[0], 1])
+        edgeLeft_with_normals = tf.concat([edgeLeftSample, normal_left], axis=1)
+
+
+        #sample on vertical right edge
         edgeRightSample = tf.stack([tf.fill([n_points_vertical], tf.cast(self.right + self.radius, dtype)),
                       tf.linspace(self.down + self.radius,self.up - self.radius,n_points_vertical, name=None)], axis=1)
+        normal_vec_right = tf.constant([1.0, 0.0], dtype=edgeRightSample.dtype)
+
+        normal_right = tf.tile(normal_vec_right[None, :],
+                       [tf.shape(edgeRightSample)[0], 1])
+        edgeRight_with_normals = tf.concat([edgeRightSample, normal_right], axis=1)
+
         #sample on circular corners 
         #upper right corner
         theta = tf.random.uniform([n_points_corner], 0.0, tf.constant(np.pi/2, dtype), dtype=dtype, seed=None)
         cx, cy = tf.unstack(self.corners_tf[3])
         x = cx + self.radius * tf.cos(theta)
         y = cy + self.radius * tf.sin(theta)
-        upRightCornerSample = tf.stack([x, y], axis=1)
+        r1 = tf.cos(theta)
+        r2 = tf.sin(theta)
+        upRightCornerSample = tf.stack([x, y, r1, r2], axis=1)
 
         #upper left corner 
         theta = tf.random.uniform([n_points_corner],  tf.constant(np.pi/2, dtype), tf.constant(np.pi, dtype), dtype=dtype, seed=None)
         cx, cy = tf.unstack(self.corners_tf[2])
         x = cx + self.radius * tf.cos(theta)
         y = cy + self.radius * tf.sin(theta)
-        upLeftCornerSample = tf.stack([x, y], axis=1)
+        r1 = tf.cos(theta)
+        r2 = tf.sin(theta)
+        upLeftCornerSample = tf.stack([x, y, r1, r2], axis=1)
 
         #lower left corner 
         theta = tf.random.uniform([n_points_corner],  tf.constant(np.pi, dtype), tf.constant(3*np.pi/2, dtype), dtype=dtype, seed=None)
         cx, cy = tf.unstack(self.corners_tf[0])
         x = cx + self.radius * tf.cos(theta)
         y = cy + self.radius * tf.sin(theta)
-        downLeftCornerSample = tf.stack([x, y], axis=1)
+        r1 = tf.cos(theta)
+        r2 = tf.sin(theta)
+        downLeftCornerSample = tf.stack([x, y, r1, r2], axis=1)
 
         #lower right corner 
         theta = tf.random.uniform([n_points_corner],  tf.constant(3*np.pi/2, dtype), tf.constant(2*np.pi, dtype), dtype=dtype, seed=None)
         cx, cy = tf.unstack(self.corners_tf[1])
         x = cx + self.radius * tf.cos(theta)
         y = cy + self.radius * tf.sin(theta)
-        downRightCornerSample = tf.stack([x, y], axis=1)
+        r1 = tf.cos(theta)
+        r2 = tf.sin(theta)
+        downRightCornerSample = tf.stack([x, y, r1, r2], axis=1)
 
     
-        return tf.concat([edgeUpSample, edgeDownSample, edgeLeftSample, edgeRightSample, upRightCornerSample,upLeftCornerSample, downLeftCornerSample, downRightCornerSample], axis=0)
+        return tf.concat([edgeUp_with_normals, edgeDown_with_normals, edgeLeft_with_normals, edgeRight_with_normals, upRightCornerSample,upLeftCornerSample, downLeftCornerSample, downRightCornerSample], axis=0)
     
 # ===========================Define PINN structure ============================#
 
@@ -141,16 +217,22 @@ class PhysicsInformedNN(tf.keras.Model):
         self.crack_line = CrackLine(left=crack_left_end0[0], right=crack_right_end0[0], up=crack_left_end0[1], down=-0.3, radius=0.04)  
 
         self.subnet_in  = tf.keras.Sequential([
-            tf.keras.layers.Dense(20, activation="tanh"),
-            tf.keras.layers.Dense(20, activation="tanh"),
-            tf.keras.layers.Dense(20, activation="tanh"),
+            tf.keras.layers.Dense(30, activation="tanh"),
+            tf.keras.layers.Dense(30, activation="tanh"),
+            tf.keras.layers.Dense(30, activation="tanh"),
+            tf.keras.layers.Dense(30, activation="tanh"),
+            tf.keras.layers.Dense(30, activation="tanh"),
+            tf.keras.layers.Dense(30, activation="tanh"),
             tf.keras.layers.Dense(2),
         ])
 
         self.subnet_out = tf.keras.Sequential([
-            tf.keras.layers.Dense(20, activation="tanh"),
-            tf.keras.layers.Dense(20, activation="tanh"),
-            tf.keras.layers.Dense(20, activation="tanh"),
+            tf.keras.layers.Dense(30, activation="tanh"),
+            tf.keras.layers.Dense(30, activation="tanh"),
+            tf.keras.layers.Dense(30, activation="tanh"),
+            tf.keras.layers.Dense(30, activation="tanh"),
+            tf.keras.layers.Dense(30, activation="tanh"),
+            tf.keras.layers.Dense(30, activation="tanh"),
             tf.keras.layers.Dense(2),
         ])
 
@@ -190,7 +272,7 @@ def true_solution(X):
 
 
 @tf.function
-def forcing(X, lambda_=0.7, mu=0.5):
+def forcing(X, lambda_=0.7, mu=0.5, homogeneous=True):
     X = tf.convert_to_tensor(X, dtype=tf.float32)
     tf.ensure_shape(X, [None, 2])
 
@@ -221,7 +303,12 @@ def forcing(X, lambda_=0.7, mu=0.5):
     # div σ = [∂σxx/∂x + ∂σxy/∂y,  ∂σxy/∂x + ∂σyy/∂y]
     div_x = J[:, 0, 0:1] + J[:, 1, 1:2]
     div_y = J[:, 1, 0:1] + J[:, 2, 1:2]
-    return tf.concat([div_x, div_y], axis=1)  # (N,2)
+    div = tf.concat([div_x, div_y], axis=1)  # (N,2)
+
+    multiplier = 1.0 - tf.cast(homogeneous, tf.float32)  # scalar 0. or 1.
+    f = -div * multiplier  # broadcasted to (N,2)
+
+    return f
 
 
 
@@ -237,9 +324,16 @@ def residual(X):
     out = tf.concat([r1, r2], axis=1)  # (N,2)
     return out
 
-def boundary_condition_Dirichlet(X):
-    # Non-zero Dirichlet data g(x,y):
-    return true_solution(X)
+def boundary_condition_Dirichlet(X, homogeneous=True):
+    tf.ensure_shape(X, [None, 2])
+    
+    u_true = true_solution(X)     # (N,2)
+
+    # homogeneous=True  -> u_bc = 0
+    # homogeneous=False -> u_bc = true_solution(X)
+    multiplier = 1.0 - tf.cast(homogeneous, tf.float32)  # scalar in {0,1}
+
+    return u_true * multiplier   # broadcasts to (N,2)
 
 # traction (true) on top side from true solution: t = sigma_true · n
 @tf.function
@@ -264,22 +358,40 @@ def true_traction_top(Xb, lambda_=0.7, mu=0.5):
 
 # traction from pinn (used for both top boundary and crack interface)
 @tf.function
-def traction_from_pinn(Xb, normal, lambda_=0.7, mu=0.5, overide_traction = None):
-    # build sigma using pinn and compute t = sigma · n
-    n1, n2 = normal[0], normal[1]
-    with tf.GradientTape(persistent=True) as g:
+def traction_from_pinn(Xb, normal, lambda_=0.7, mu=0.5, overide_traction=None):
+    # Xb: (N, 4) -> [x, y]
+
+    tf.ensure_shape(Xb, [None,2])
+    tf.ensure_shape(normal, [None,2])
+    dtype = Xb.dtype
+    n1 = normal[:, 0:1]
+    n2 = normal[:, 1:2]
+
+    lambda_ = tf.cast(lambda_, dtype)
+    mu      = tf.cast(mu, dtype)
+
+    with tf.GradientTape(persistent=False) as g:
         g.watch(Xb)
-        u_pred = pinn(Xb, overide_call = overide_traction)
-        du = g.batch_jacobian(u_pred, Xb)
-    eps_xx = tf.expand_dims(du[:,0,0], -1); eps_xy = tf.expand_dims(0.5*(du[:,0,1] + du[:,1,0]), -1); eps_yy = tf.expand_dims(du[:,1,1], -1)
+        u_pred = pinn(Xb, overide_call=overide_traction)  # (N, 2)
+        du = g.batch_jacobian(u_pred, Xb)  # (N, 2, 2)
+
+    # strain components
+    eps_xx = tf.expand_dims(du[:, 0, 0], -1)
+    eps_yy = tf.expand_dims(du[:, 1, 1], -1)
+    eps_xy = tf.expand_dims(0.5 * (du[:, 0, 1] + du[:, 1, 0]), -1)
+
     trace = eps_xx + eps_yy
-    sx = lambda_*trace + 2.0*mu*eps_xx
-    sy = lambda_*trace + 2.0*mu*eps_yy
-    sxy = 2.0*mu*eps_xy
+
+    # stresses
+    sx  = lambda_ * trace + 2.0 * mu * eps_xx
+    sy  = lambda_ * trace + 2.0 * mu * eps_yy
+    sxy = 2.0 * mu * eps_xy
+
+    # traction t = sigma n
     t1 = sx * n1 + sxy * n2
     t2 = sxy * n1 + sy * n2
-    del g
-    return tf.concat([t1, t2], axis=1)
+
+    return tf.concat([t1, t2], axis=1)  # (N, 2)
 
 @tf.function
 def divCGradU(X, lambda_=0.7, mu=0.5):
@@ -339,6 +451,7 @@ def interface_jump_displacement(X, a=100/39):
     X = tf.cast(X, dtype)
 
     x = X[:, 0:1]  # (N,1)
+    y = X[:, 1:2]
 
     # make all scalars same dtype
     a = tf.cast(a, dtype)
@@ -349,20 +462,23 @@ def interface_jump_displacement(X, a=100/39):
     one   = tf.cast(  1.0, dtype)
 
     # boolean mask in float dtype
-    mask = tf.cast((x >= left) & (x <= right), dtype)  # (N,1)
+    mask_interval = tf.cast((x >= left) & (x <= right), dtype)  # (N,1)
+    mask_y_zero = tf.cast(tf.equal(y, 0.0), dtype)  # (N,1)
+    mask = mask_interval * mask_y_zero 
+
 
     # poly = 1 - (a^12) * x^12, all tensor ops (no Python-side pow on mixed dtypes)
     poly = one - tf.pow(a, 12) * tf.pow(x, 12)  # (N,1)
 
-    f1 = m10 * poly * mask  # (N,1)
-    f2 = p20 * poly * mask  # (N,1)
+    f1 =- m10 * poly * mask  # (N,1)
+    f2 =- p20 * poly * mask  # (N,1)
 
     return tf.concat([f1, f2], axis=1)  # (N,2)
 
 
 
 @tf.function
-def interface_jump_traction(X):
+def interface_jump_traction(X, normal):
     #zero jump condition in traction across the crack line
     #used for forward problem only
     x = X[:, 0:1]
@@ -381,12 +497,29 @@ def interface_jump_traction(X):
 
 def sample_uniform_points_in_rectangle(n, domain_bottom_left0, domain_top_right0, dtype=tf.float32):
     #Sample n points uniformly inside a rectangle provided bottom left and top right corners
-
     x_min, y_min = domain_bottom_left0
     x_max, y_max = domain_top_right0
 
     xs = tf.random.uniform(shape=(n,), minval=x_min, maxval=x_max, dtype=dtype)
     ys = tf.random.uniform(shape=(n,), minval=y_min, maxval=y_max, dtype=dtype)
+
+    return tf.stack([xs, ys], axis=1)
+
+def sample_near_crack_tips(n, crack_left_end0, crack_right_end0, radius=0.1, dtype=tf.float32):
+    #Sample n points uniformly near the crack tips (within a circle of given radius)
+    angles = tf.random.uniform(shape=(n,), minval=0.0, maxval=2.0*np.pi, dtype=dtype)
+    radii = tf.random.normal(shape=(n,), mean=0.0, stddev=radius/3.0, dtype=dtype)
+    radii = tf.abs(radii)  # ensure positive radius
+
+    # Half points near left tip, half near right tip
+    n_half = n // 2
+    xs_left = crack_left_end0[0] + radii[:n_half] * tf.cos(angles[:n_half])
+    ys_left = crack_left_end0[1] + radii[:n_half] * tf.sin(angles[:n_half])
+    xs_right = crack_right_end0[0] + radii[n_half:] * tf.cos(angles[n_half:])
+    ys_right = crack_right_end0[1] + radii[n_half:] * tf.sin(angles[n_half:])
+
+    xs = tf.concat([xs_left, xs_right], axis=0)
+    ys = tf.concat([ys_left, ys_right], axis=0)
 
     return tf.stack([xs, ys], axis=1)
 
@@ -396,18 +529,34 @@ def sample_boundary_Dirichlet(n_per_side, domain_bottom_left0, domain_top_right0
     x0, x1 = domain_bottom_left0[0], domain_top_right0[0]
     y0, y1 = domain_bottom_left0[1], domain_top_right0[1]
 
-    left   = tf.concat([tf.fill((n_per_side,1), x0), y0 + (y1-y0)*s], axis=1)
-    right  = tf.concat([tf.fill((n_per_side,1), x1), y0 + (y1-y0)*s], axis=1)
+    # left   = tf.concat([tf.fill((n_per_side,1), x0), y0 + (y1-y0)*s], axis=1)
+    # right  = tf.concat([tf.fill((n_per_side,1), x1), y0 + (y1-y0)*s], axis=1)
     bottom = tf.concat([x0 + (x1-x0)*s, tf.fill((n_per_side,1), y0)], axis=1)
-    return tf.concat([left, right, bottom], axis=0)
+    # return tf.concat([left, right, bottom], axis=0)
+    return bottom
 
 # sample top side for traction (Neumann)
-def sample_boundary_Neumann(n, domain_bottom_left0, domain_top_right0):
+def sample_boundary_Neumann_top(n, domain_bottom_left0, domain_top_right0):
     s = tf.random.uniform((n,1), 0.0, 1.0)
     x0, x1 = domain_bottom_left0[0], domain_top_right0[0]
     y1 = domain_top_right0[1]
     top = tf.concat([x0 + (x1-x0)*s, tf.fill((n,1), y1)], axis=1)
     return top
+# sample left side for traction (Neumann)
+def sample_boundary_Neumann_left(n, domain_bottom_left0, domain_top_right0):
+    s = tf.random.uniform((n,1), 0.0, 1.0)
+    x0 = domain_bottom_left0[0]
+    y0, y1 = domain_bottom_left0[1], domain_top_right0[1]
+    left = tf.concat([tf.fill((n,1), x0), y0 + (y1 - y0) * s], axis=1)
+    return left
+# sample right side for traction (Neumann)
+def sample_boundary_Neumann_right(n, domain_bottom_left0, domain_top_right0):
+    s = tf.random.uniform((n,1), 0.0, 1.0)
+    x1 = domain_top_right0[0]
+    y0, y1 = domain_bottom_left0[1], domain_top_right0[1]
+    right = tf.concat([tf.fill((n,1), x1), y0 + (y1 - y0) * s], axis=1)
+    return right
+
 
 
 #====================================================== training (Forward problem) =======================================================
@@ -415,15 +564,22 @@ def sample_boundary_Neumann(n, domain_bottom_left0, domain_top_right0):
 optimizer = tf.keras.optimizers.Adam(1e-3)
 
 n_interior_point=100
-n_boudary_point=25
-Xf = sample_uniform_points_in_rectangle(n_interior_point, domain_bottom_left, domain_top_right)
-Xb_Dirichlet = sample_boundary_Dirichlet(n_boudary_point, domain_bottom_left, domain_top_right)
-Xb_Neumann = sample_boundary_Neumann(n_boudary_point, domain_bottom_left, domain_top_right)
-XInterface = pinn.crack_line.sample_crack()
-
+n_boudary_point=50
+isHomogeneousJump = 0.0   #1.0 for non-homogeneous jump condition; 0.0 for homogeneous jump condition
 
 @tf.function
-def train_step_pinn(Xf, Xb_Dirichlet, Xb_Neumann, XInterface , w_phys=1.0, w_bnd_D=1.0, w_bnd_N=1.0, w_interf_disp = 1.0, w_interf_tract = 1.0, Xu=None, Yu=None, w_data=0.0):
+def train_step_pinn(w_phys=1.0, w_bnd_D=1.0, w_bnd_N=1.0, w_interf_disp = 3.0, w_interf_tract = 1.0, Xu=None, Yu=None, w_data=0.0):
+    Xf = sample_uniform_points_in_rectangle(n_interior_point, domain_bottom_left, domain_top_right)
+    Xcrack_tip = sample_near_crack_tips(n_interior_point//2, crack_left_end, crack_right_end, radius=0.1)
+    Xf = tf.concat([Xf, Xcrack_tip], axis=0)
+    Xb_Dirichlet = sample_boundary_Dirichlet(n_boudary_point, domain_bottom_left, domain_top_right)
+    Xb_Neumann_top = sample_boundary_Neumann_top(n_boudary_point//3, domain_bottom_left, domain_top_right)
+    Xb_Neumann_left   = sample_boundary_Neumann_left(n_boudary_point//3,   domain_bottom_left, domain_top_right)
+    Xb_Neumann_right  = sample_boundary_Neumann_right(n_boudary_point//3,  domain_bottom_left, domain_top_right)
+
+    XInterface = pinn.crack_line.sample_crack()
+    XInterface_points = XInterface[:, 0:2]
+    XInterface_normals = XInterface[:, 2:4]
 
     with tf.GradientTape() as tape:
         # physics loss (interior)
@@ -433,17 +589,16 @@ def train_step_pinn(Xf, Xb_Dirichlet, Xb_Neumann, XInterface , w_phys=1.0, w_bnd
         # boundary loss (Dirichlet)
         loss_bnd_Dirichlet = tf.reduce_mean(tf.reduce_sum (tf.square(pinn(Xb_Dirichlet) - boundary_condition_Dirichlet(Xb_Dirichlet)), axis = 1))
 
-        # boundary loss (Neumann) 
-        normal_vector = [0.0,1.0]
-        loss_bnd_Neumann = tf.reduce_mean(tf.reduce_sum(tf.square(traction_from_pinn(Xb_Neumann,normal_vector) - true_traction_top(Xb_Neumann)), axis=1))
-
+        # boundary loss top (Neumann) 
+        loss_bnd_Neumann_top = tf.reduce_mean(tf.reduce_sum(tf.square(traction_from_pinn(Xb_Neumann_top,[0.0,1.0]) - tf.zeros_like(Xb_Neumann_top)), axis=1))
+        loss_bnd_Neumann_left = tf.reduce_mean(tf.reduce_sum(tf.square(traction_from_pinn(Xb_Neumann_left,[-1.0,0.0]) - tf.zeros_like(Xb_Neumann_left)), axis=1))
+        loss_bnd_Neumann_right = tf.reduce_mean(tf.reduce_sum(tf.square(traction_from_pinn(Xb_Neumann_right,[1.0,0.0]) - tf.zeros_like(Xb_Neumann_right)), axis=1))
+        loss_bnd_Neumann = (loss_bnd_Neumann_top + loss_bnd_Neumann_left + loss_bnd_Neumann_right)
         # interface loss (crack) - jump in displacement
-        loss_interface_displacement = tf.reduce_mean(tf.reduce_sum(tf.square(pinn(XInterface, overide_call=True) - pinn(XInterface, overide_call=False) - interface_jump_displacement(XInterface)), axis=1))
+        loss_interface_displacement = tf.reduce_mean(tf.reduce_sum(tf.square(pinn(XInterface_points, overide_call=True) - pinn(XInterface_points, overide_call=False) - isHomogeneousJump*interface_jump_displacement(XInterface_points)), axis=1))
 
         #interface loss (crack) - jump in traction
-
-        normal_vector_interface = [0.0,1.0]   # normal vector on the crack line (upward)
-        loss_interface_traction = tf.reduce_mean(tf.reduce_sum(tf.square(traction_from_pinn(XInterface, normal_vector_interface, overide_traction=True) - traction_from_pinn(XInterface, normal_vector_interface, overide_traction=False) - interface_jump_traction(XInterface)), axis=1))
+        loss_interface_traction = tf.reduce_mean(tf.reduce_sum(tf.square(traction_from_pinn(XInterface_points, XInterface_normals, overide_traction=True) - traction_from_pinn(XInterface_points, XInterface_normals, overide_traction=False) - interface_jump_traction(XInterface_points, XInterface_normals)), axis=1))
     
 
         # optional supervised/data loss
@@ -458,25 +613,91 @@ def train_step_pinn(Xf, Xb_Dirichlet, Xb_Neumann, XInterface , w_phys=1.0, w_bnd
 
     grads = tape.gradient(loss, pinn.trainable_variables)
     optimizer.apply_gradients(zip(grads, pinn.trainable_variables))
-    return loss, loss_phys, loss_bnd_Dirichlet, loss_bnd_Neumann ,loss_data
+    return loss, loss_phys, loss_bnd_Dirichlet, loss_bnd_Neumann ,loss_interface_displacement, loss_interface_traction
 
 
 
-for epoch in range(5000):
-    loss, lp, lbDirichlet, lbNeumann, ld = train_step_pinn(Xf, Xb_Dirichlet, Xb_Neumann, XInterface)
-    if (epoch+1) % 2 == 0:
-        print(f"epoch {epoch+1:04d} | total {loss:.3e} | phys {lp:.3e} | bndDir {lbDirichlet:.3e} | bndNeu {lbNeumann:.3e} | data {ld:.3e}")
+for epoch in range(10000):
+    loss, lp, lbDirichlet, lbNeumann, lJumpDir, lJumpTrac = train_step_pinn()
+    if (epoch+1) % 50 == 0:
+        print(f"epoch {epoch+1:04d} | total {loss:.3e} | phys {lp:.3e} | bndDir {lbDirichlet:.3e} | bndNeu {lbNeumann:.3e} | dirJump {lJumpDir:.3e} | tracJump {lJumpTrac:.3e}")
+    if loss < 1e-8:
+        print("Early stopping at epoch", epoch+1)
+        break
 
-X_test = np.linspace(0.0, 1.0, 100)
-Y_test = np.linspace(0.0, 1.0, 100)
-X, Y = np.meshgrid(X_test, Y_test)
-X_star = np.column_stack((X.ravel(), Y.ravel())).astype(np.float32)
-u_start = true_solution(X_star)
-u_pred = pinn(X_star)
-u_diff = np.abs(u_start - u_pred)
 
-testing_error = np.linalg.norm(u_start - u_pred,2) / np.linalg.norm(u_start,2)
-print(f"Testing Error: {testing_error:.3e}")
+# # ============================ Testing =================================#
+XY_test_tensor = tf.convert_to_tensor(np.column_stack((X_test, Y_test)).astype(np.float32))
+u_pred_test = pinn(XY_test_tensor)
+u_pred_test_np = u_pred_test.numpy()
+u1_pred_test = u_pred_test_np[:,0]
+u2_pred_test = u_pred_test_np[:,1]
+
+fig = plt.figure(figsize=(14,6))
+
+ax1 = fig.add_subplot(121, projection='3d')
+ax1.scatter(X_test, Y_test, u1_pred_test, c=u1_pred_test, cmap='coolwarm', s=5)
+ax1.set_xlabel('X')
+ax1.set_ylabel('Y')
+ax1.set_zlabel('U1')
+ax1.set_title('3D map of pred U1')
+ax1.view_init(elev=0, azim=90)
+
+ax2 = fig.add_subplot(122, projection='3d')
+ax2.scatter(X_test, Y_test,  u2_pred_test, c=u2_pred_test, cmap='coolwarm', s=5)
+ax2.set_xlabel('X')
+ax2.set_ylabel('Y')
+ax2.set_zlabel('U2')
+ax2.set_title('3D map of pred diff U2')
+ax2.view_init(elev=0, azim=90)
+plt.tight_layout()
+plt.show(block = False)
+
+
+# # Compute testing error
+diff_u1 = U1_test - u1_pred_test
+diff_u2 = U2_test - u2_pred_test
+error_u1 = np.linalg.norm(U1_test - u1_pred_test, 2) / np.linalg.norm(U1_test, 2)
+error_u2 = np.linalg.norm(U2_test - u2_pred_test, 2) / np.linalg.norm(U2_test, 2)
+print(f"Testing Error in U1: {error_u1:.3e}")
+print(f"Testing Error in U2: {error_u2:.3e}")   
+
+# ---- 3D scatter plots of U1 and U2 ----
+fig = plt.figure(figsize=(14,6))
+
+ax1 = fig.add_subplot(121, projection='3d')
+ax1.scatter(X_test, Y_test, diff_u1, c=diff_u1, cmap='coolwarm', s=5)
+ax1.set_xlabel('X')
+ax1.set_ylabel('Y')
+ax1.set_zlabel('U1')
+ax1.set_title('3D map of diff U1')
+ax1.view_init(elev=0, azim=90)
+
+ax2 = fig.add_subplot(122, projection='3d')
+ax2.scatter(X_test, Y_test, diff_u2, c=diff_u2, cmap='coolwarm', s=5)
+ax2.set_xlabel('X')
+ax2.set_ylabel('Y')
+ax2.set_zlabel('U2')
+ax2.set_title('3D map of diff U2')
+ax2.view_init(elev=0, azim=90)
+plt.tight_layout()
+plt.show()
+
+
+
+
+
+
+# X_test = np.linspace(0.0, 1.0, 100)
+# Y_test = np.linspace(0.0, 1.0, 100)
+# X, Y = np.meshgrid(X_test, Y_test)
+# X_star = np.column_stack((X.ravel(), Y.ravel())).astype(np.float32)
+# u_start = true_solution(X_star)
+# u_pred = pinn(X_star)
+# # u_diff = np.abs(u_start - u_pred)
+
+# testing_error = np.linalg.norm(u_start - u_pred,2) / np.linalg.norm(u_start,2)
+# print(f"Testing Error: {testing_error:.3e}")
 
 
 # # ---- evaluation & plotting ----
