@@ -222,7 +222,7 @@ class PhysicsInformedNN(tf.keras.Model):
             tf.keras.layers.Dense(30, activation="tanh"),
             tf.keras.layers.Dense(30, activation="tanh"),
             tf.keras.layers.Dense(30, activation="tanh"),
-            tf.keras.layers.Dense(30, activation="tanh"),
+            # tf.keras.layers.Dense(30, activation="tanh"),
             tf.keras.layers.Dense(2),
         ])
 
@@ -232,7 +232,7 @@ class PhysicsInformedNN(tf.keras.Model):
             tf.keras.layers.Dense(30, activation="tanh"),
             tf.keras.layers.Dense(30, activation="tanh"),
             tf.keras.layers.Dense(30, activation="tanh"),
-            tf.keras.layers.Dense(30, activation="tanh"),
+            # tf.keras.layers.Dense(30, activation="tanh"),
             tf.keras.layers.Dense(2),
         ])
 
@@ -311,8 +311,6 @@ def forcing(X, lambda_=0.7, mu=0.5, homogeneous=True):
     return f
 
 
-
-
 @tf.function
 def residual(X):
     _, _, _, _, _, div_x, div_y = divCGradU(X)
@@ -359,7 +357,7 @@ def true_traction_top(Xb, lambda_=0.7, mu=0.5):
 # traction from pinn (used for both top boundary and crack interface)
 @tf.function
 def traction_from_pinn(Xb, normal, lambda_=0.7, mu=0.5, overide_traction=None):
-    # Xb: (N, 4) -> [x, y]
+
 
     tf.ensure_shape(Xb, [None,2])
     tf.ensure_shape(normal, [None,2])
@@ -479,15 +477,11 @@ def interface_jump_displacement(X, a=100/39):
 
 @tf.function
 def interface_jump_traction(X, normal):
-    #zero jump condition in traction across the crack line
-    #used for forward problem only
-    x = X[:, 0:1]
-    y = X[:, 0:1]
+    # zero jump in traction across crack
+    X = tf.convert_to_tensor(X)
+    tf.ensure_shape(X, [None, 2])
+    return tf.zeros_like(X, dtype=tf.float32)
 
-    f1 = tf.zeros_like(x, dtype=tf.float32)
-    f2 = tf.zeros_like(x, dtype=tf.float32)
-
-    return tf.concat([f1, f2], axis=1)
 
 
 
@@ -563,23 +557,30 @@ def sample_boundary_Neumann_right(n, domain_bottom_left0, domain_top_right0):
 #=========================================================================================================================================
 optimizer = tf.keras.optimizers.Adam(1e-3)
 
-n_interior_point=100
-n_boudary_point=50
+n_interior_point=50
+n_boudary_point=10
 isHomogeneousJump = 0.0   #1.0 for non-homogeneous jump condition; 0.0 for homogeneous jump condition
 
 @tf.function
-def train_step_pinn(w_phys=1.0, w_bnd_D=1.0, w_bnd_N=1.0, w_interf_disp = 3.0, w_interf_tract = 1.0, Xu=None, Yu=None, w_data=0.0):
+def train_step_pinn(w_phys=1.0, w_bnd_D=1.0, w_bnd_N=1.0, w_interf_disp = 1.0, w_interf_tract = 1.0, Xu=None, Yu=None, w_data=0.0):
     Xf = sample_uniform_points_in_rectangle(n_interior_point, domain_bottom_left, domain_top_right)
     Xcrack_tip = sample_near_crack_tips(n_interior_point//2, crack_left_end, crack_right_end, radius=0.1)
     Xf = tf.concat([Xf, Xcrack_tip], axis=0)
     Xb_Dirichlet = sample_boundary_Dirichlet(n_boudary_point, domain_bottom_left, domain_top_right)
-    Xb_Neumann_top = sample_boundary_Neumann_top(n_boudary_point//3, domain_bottom_left, domain_top_right)
-    Xb_Neumann_left   = sample_boundary_Neumann_left(n_boudary_point//3,   domain_bottom_left, domain_top_right)
-    Xb_Neumann_right  = sample_boundary_Neumann_right(n_boudary_point//3,  domain_bottom_left, domain_top_right)
+
+    Xb_Neumann_top_points = sample_boundary_Neumann_top(n_boudary_point//3, domain_bottom_left, domain_top_right)
+    Xb_Neumann_top_normal = tf.tile(tf.constant([[0.0,1.0]], dtype=tf.float32), [tf.shape(Xb_Neumann_top_points)[0],1])
+
+    Xb_Neumann_left_points   = sample_boundary_Neumann_left(n_boudary_point//3,   domain_bottom_left, domain_top_right)
+    Xb_Neumann_left_normal = tf.tile(tf.constant([[-1.0,0.0]], dtype=tf.float32), [tf.shape(Xb_Neumann_left_points)[0],1])
+
+    Xb_Neumann_right_points  = sample_boundary_Neumann_right(n_boudary_point//3,  domain_bottom_left, domain_top_right)
+    Xb_Neumann_right_normal = tf.tile(tf.constant([[1.0,0.0]], dtype=tf.float32), [tf.shape(Xb_Neumann_right_points)[0],1])
+
 
     XInterface = pinn.crack_line.sample_crack()
-    XInterface_points = XInterface[:, 0:2]
-    XInterface_normals = XInterface[:, 2:4]
+    # XInterface_points = XInterface[:, 0:2]
+    # XInterface_normals = 
 
     with tf.GradientTape() as tape:
         # physics loss (interior)
@@ -587,18 +588,18 @@ def train_step_pinn(w_phys=1.0, w_bnd_D=1.0, w_bnd_N=1.0, w_interf_disp = 3.0, w
         loss_phys = tf.reduce_mean(tf.reduce_sum(tf.square(r), axis=1))
 
         # boundary loss (Dirichlet)
-        loss_bnd_Dirichlet = tf.reduce_mean(tf.reduce_sum (tf.square(pinn(Xb_Dirichlet) - boundary_condition_Dirichlet(Xb_Dirichlet)), axis = 1))
+        loss_bnd_Dirichlet = tf.reduce_mean(tf.reduce_sum (tf.square(pinn(Xb_Dirichlet) - 0*boundary_condition_Dirichlet(Xb_Dirichlet)), axis = 1))
 
         # boundary loss top (Neumann) 
-        loss_bnd_Neumann_top = tf.reduce_mean(tf.reduce_sum(tf.square(traction_from_pinn(Xb_Neumann_top,[0.0,1.0]) - tf.zeros_like(Xb_Neumann_top)), axis=1))
-        loss_bnd_Neumann_left = tf.reduce_mean(tf.reduce_sum(tf.square(traction_from_pinn(Xb_Neumann_left,[-1.0,0.0]) - tf.zeros_like(Xb_Neumann_left)), axis=1))
-        loss_bnd_Neumann_right = tf.reduce_mean(tf.reduce_sum(tf.square(traction_from_pinn(Xb_Neumann_right,[1.0,0.0]) - tf.zeros_like(Xb_Neumann_right)), axis=1))
+        loss_bnd_Neumann_top = tf.reduce_mean(tf.reduce_sum(tf.square(traction_from_pinn(Xb_Neumann_top_points,Xb_Neumann_top_normal) - tf.zeros_like(Xb_Neumann_top_points)), axis=1))
+        loss_bnd_Neumann_left = tf.reduce_mean(tf.reduce_sum(tf.square(traction_from_pinn(Xb_Neumann_left_points,Xb_Neumann_left_normal) - tf.zeros_like(Xb_Neumann_left_points)), axis=1))
+        loss_bnd_Neumann_right = tf.reduce_mean(tf.reduce_sum(tf.square(traction_from_pinn(Xb_Neumann_right_points,Xb_Neumann_right_normal) - tf.zeros_like(Xb_Neumann_right_points)), axis=1))
         loss_bnd_Neumann = (loss_bnd_Neumann_top + loss_bnd_Neumann_left + loss_bnd_Neumann_right)
         # interface loss (crack) - jump in displacement
-        loss_interface_displacement = tf.reduce_mean(tf.reduce_sum(tf.square(pinn(XInterface_points, overide_call=True) - pinn(XInterface_points, overide_call=False) - isHomogeneousJump*interface_jump_displacement(XInterface_points)), axis=1))
+        loss_interface_displacement = tf.reduce_mean(tf.reduce_sum(tf.square(pinn(XInterface[:, 0:2], overide_call=True) - pinn(XInterface[:, 0:2], overide_call=False) - isHomogeneousJump*interface_jump_displacement(XInterface[:, 0:2])), axis=1))
 
         #interface loss (crack) - jump in traction
-        loss_interface_traction = tf.reduce_mean(tf.reduce_sum(tf.square(traction_from_pinn(XInterface_points, XInterface_normals, overide_traction=True) - traction_from_pinn(XInterface_points, XInterface_normals, overide_traction=False) - interface_jump_traction(XInterface_points, XInterface_normals)), axis=1))
+        loss_interface_traction = tf.reduce_mean(tf.reduce_sum(tf.square(traction_from_pinn(XInterface[:, 0:2], XInterface[:, 2:4], overide_traction=True) - traction_from_pinn(XInterface[:, 0:2], XInterface[:, 2:4], overide_traction=False) - interface_jump_traction(XInterface[:, 0:2], XInterface[:, 2:4])), axis=1))
     
 
         # optional supervised/data loss
@@ -617,7 +618,7 @@ def train_step_pinn(w_phys=1.0, w_bnd_D=1.0, w_bnd_N=1.0, w_interf_disp = 3.0, w
 
 
 
-for epoch in range(10000):
+for epoch in range(2000):
     loss, lp, lbDirichlet, lbNeumann, lJumpDir, lJumpTrac = train_step_pinn()
     if (epoch+1) % 50 == 0:
         print(f"epoch {epoch+1:04d} | total {loss:.3e} | phys {lp:.3e} | bndDir {lbDirichlet:.3e} | bndNeu {lbNeumann:.3e} | dirJump {lJumpDir:.3e} | tracJump {lJumpTrac:.3e}")
