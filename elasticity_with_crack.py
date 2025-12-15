@@ -18,12 +18,19 @@ from mpl_toolkits.mplot3d import Axes3D
 # np.random.seed(1234)
 # tf.random.set_seed(1234)
 
+#============================ SET CASE: ZERO SLIPPAGE OR NONZERO SLIPPAGE ============================#
+# slippage_case = 0 #slippage is zero
+slippage_case = 1 #slippage is non-zero
 
 
 # ============================ Load MATLAB data ============================#
 from scipy.io import loadmat
 
-path = "/Users/arumlee/Desktop/matlab_code_dislocations 2/Gsub.mat"
+# path = "/Users/arumlee/Desktop/matlab_code_dislocations 2/Gsub.mat"
+if slippage_case == 0:  
+    path = "data/Gsub.mat"
+else:
+    path = "data/Gsub_nonzero.mat"
 data = loadmat(path)
 Test_data = data['Gsub']   #shape (N,3)
 X_test = Test_data[:,0]    
@@ -685,7 +692,7 @@ def train_step_pinn(w_phys=1.0, w_bnd_D=1.0, w_bnd_N=1.0, w_interf_disp = 2.0, w
 
 
 
-for epoch in range(10000):
+for epoch in range(10):
     loss, lp, lbDirichlet, lbNeumann, lJumpDir, lJumpTrac = train_step_pinn()
     if (epoch+1) % 50 == 0:
         print(f"epoch {epoch+1:04d} | total {loss:.3e} | phys {lp:.3e} | bndDir {lbDirichlet:.3e} | bndNeu {lbNeumann:.3e} | dirJump {lJumpDir:.3e} | tracJump {lJumpTrac:.3e}")
