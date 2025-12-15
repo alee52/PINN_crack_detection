@@ -1,8 +1,6 @@
 # This code implements a Physics-Informed Neural Network (PINN) to solve a 2D linear elasticity problem using TensorFlow and Keras.
-# Important feature of this version: 
-# 
-# 1) the crack is part of a closed surface and assumed to be known. Only the slip is unknown.
-# 2) since the crack is known, we only need to sample the residue points once before training
+# The crack is part of a closed surface and assumed to be known. Only the slip is unknown.
+
 import tensorflow as tf
 from tensorflow import keras
 import numpy as np
@@ -23,12 +21,11 @@ from mpl_toolkits.mplot3d import Axes3D
 slippage_case = 1 #slippage is non-zero
 
 
-# ============================ Load MATLAB data ============================#
+# ============================ Load MATLAB data =======================================================#
 from scipy.io import loadmat
 
-# path = "/Users/arumlee/Desktop/matlab_code_dislocations 2/Gsub.mat"
 if slippage_case == 0:  
-    path = "data/Gsub.mat"
+    path = "data/Gsub_zero.mat"
 else:
     path = "data/Gsub_nonzero.mat"
 data = loadmat(path)
@@ -46,7 +43,7 @@ plt.xlabel('x')
 plt.ylabel('y')
 plt.show(block = False)
 
-# ---- 3D scatter plots of U1 and U2 ----
+# ---- 3D visualization of MATLAB data ----
 fig = plt.figure(figsize=(14,6))
 
 ax1 = fig.add_subplot(121, projection='3d')
@@ -71,7 +68,8 @@ plt.show(block = False)
 
 
 
-#============================Domain description============================#
+#============================Domain description==============================================#
+#Two end points of the crack line and the diagonal corners of the rectangular domain
 crack_left_end = [-0.4, 0.0]
 crack_right_end = [0.4, 0.0]
 domain_bottom_left = [-1.0, -1.0]
@@ -79,6 +77,8 @@ domain_top_right = [1.0, 1.0]
 
 
 # =========================== Crack (closed) geometry and sampling ===========================#
+# To utilize Physics-Informed Neural Networks (PINNs), the crack must be closed into a closed curve
+#This object defines the closed crack geometry and provides methods to check if points are inside the crack region and to sample points on the crack boundary.
 class CrackLine:
     def __init__(self, left = -0.4, right = 0.4, up=0.0, down=-0.3, radius=0.04):
         #the end points of the crack position at (left, up) and (right, up)
@@ -100,8 +100,8 @@ class CrackLine:
 
     @tf.function
     def is_inside(self, x, y, overide = None):
-        
-        #force the neural net to use inside or outside the crack region
+        #return 1 for inside the crack region, 0 for outside
+        #Overide manually force the neural net to use inside or outside the crack region (needed for points on the crack)
         if overide is True:
             return tf.ones_like(x, dtype=tf.bool)
         if overide is False:
@@ -111,19 +111,19 @@ class CrackLine:
         x = tf.convert_to_tensor(x, dtype=tf.float32)
         y = tf.convert_to_tensor(y, dtype=tf.float32)
 
-        # central rectangle
+        # check if point fall inside rectangular region
         inside_rect = tf.logical_and(
             tf.logical_and(self.left < x, x < self.right),
             tf.logical_and(self.down < y, y < self.up)
         )
 
-        # middle band expanded left/right by radius
+        # check if point fall inside middle band expanded left/right by radius
         inside_mid = tf.logical_and(
             tf.logical_and(self.left - self.radius < x, x < self.right + self.radius),
             tf.logical_and(self.down + self.radius < y, y < self.up - self.radius)
         )
 
-        # corners_tf: (4,2). Broadcast x,y to (N,1) then subtract
+        # check if point fall inside four rounded corners (quarter-circles)
         cx = self.corners_tf[:, 0]               # (4,)
         cy = self.corners_tf[:, 1]               # (4,)
         dx = tf.expand_dims(x, axis=-1) - cx     # (N,4)
@@ -131,7 +131,7 @@ class CrackLine:
         dist = tf.sqrt(dx*dx + dy*dy)            # (N,4)
         inside_corners = tf.reduce_any(dist < self.radius, axis=1)  # (N,)
 
-        # union of regions
+        # point fall into inside region if it is inside any of the three parts above
         inside = tf.logical_or(
             tf.logical_or(inside_rect, inside_mid),
             inside_corners
@@ -225,6 +225,7 @@ class PhysicsInformedNN(tf.keras.Model):
 
         zero_init = tf.keras.initializers.Zeros()
 
+        # Neural network for inside crack region
         self.subnet_in  = tf.keras.Sequential([
             tf.keras.layers.Dense(30, activation="tanh"),
             tf.keras.layers.Dense(30, activation="tanh"),
@@ -235,27 +236,7 @@ class PhysicsInformedNN(tf.keras.Model):
             tf.keras.layers.Dense(2),
         ])
 
-        # self.subnet_in  = tf.keras.Sequential([
-        #     tf.keras.layers.Dense(30, activation="tanh",
-        #                           kernel_initializer=zero_init,
-        #                           bias_initializer=zero_init),
-        #     tf.keras.layers.Dense(30, activation="tanh",
-        #                           kernel_initializer=zero_init,
-        #                           bias_initializer=zero_init),
-        #     tf.keras.layers.Dense(30, activation="tanh",
-        #                           kernel_initializer=zero_init,
-        #                           bias_initializer=zero_init),
-        #     tf.keras.layers.Dense(30, activation="tanh",
-        #                           kernel_initializer=zero_init,
-        #                           bias_initializer=zero_init),
-        #     tf.keras.layers.Dense(30, activation="tanh",
-        #                           kernel_initializer=zero_init,
-        #                           bias_initializer=zero_init),
-        #     tf.keras.layers.Dense(2,
-        #                           kernel_initializer=zero_init,
-        #                           bias_initializer=zero_init),
-        # ])
-
+        # Neural network for inside crack region
         self.subnet_out = tf.keras.Sequential([
             tf.keras.layers.Dense(30, activation="tanh"),
             tf.keras.layers.Dense(30, activation="tanh"),
@@ -266,26 +247,6 @@ class PhysicsInformedNN(tf.keras.Model):
             tf.keras.layers.Dense(2),
         ])
 
-        # self.subnet_out = tf.keras.Sequential([
-        #     tf.keras.layers.Dense(30, activation="tanh",
-        #                           kernel_initializer=zero_init,
-        #                           bias_initializer=zero_init),
-        #     tf.keras.layers.Dense(30, activation="tanh",
-        #                           kernel_initializer=zero_init,
-        #                           bias_initializer=zero_init),
-        #     tf.keras.layers.Dense(30, activation="tanh",
-        #                           kernel_initializer=zero_init,
-        #                           bias_initializer=zero_init),
-        #     tf.keras.layers.Dense(30, activation="tanh",
-        #                           kernel_initializer=zero_init,
-        #                           bias_initializer=zero_init),
-        #     tf.keras.layers.Dense(30, activation="tanh",
-        #                           kernel_initializer=zero_init,
-        #                           bias_initializer=zero_init),
-        #     tf.keras.layers.Dense(2,
-        #                           kernel_initializer=zero_init,
-        #                           bias_initializer=zero_init),
-        # ])
 
         # #custom trainable parameters
         # self.left_end = tf.Variable(1.0, trainable=True, dtype=tf.float32, name='left_end')
