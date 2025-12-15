@@ -256,15 +256,15 @@ class PhysicsInformedNN(tf.keras.Model):
         y = X[:, 1]
 
         # Boolean mask per example: True if point is inside the crack region
-        inside = self.crack_line.is_inside(x, y, overide = overide_call)                 # shape: (batch,) of booleans
+        inside = self.crack_line.is_inside(x, y, overide = overide_call)                 
 
         # Evaluate both subnets once
-        y_in  = self.subnet_in(X, training=training)             # shape: (batch, out_dim)
-        y_out = self.subnet_out(X, training=training)            # shape: (batch, out_dim)
+        y_in  = self.subnet_in(X, training=training)            
+        y_out = self.subnet_out(X, training=training)           
 
         # Select per row using the mask
-        inside = tf.expand_dims(tf.cast(inside, tf.bool), axis=-1)  # (batch, 1)
-        Z = tf.where(inside, y_in, y_out)                        # (batch, out_dim)
+        inside = tf.expand_dims(tf.cast(inside, tf.bool), axis=-1)  
+        Z = tf.where(inside, y_in, y_out)                        
         return Z
 
 pinn = PhysicsInformedNN(crack_left_end, crack_right_end, domain_bottom_left, domain_top_right)
@@ -275,6 +275,7 @@ pinn = PhysicsInformedNN(crack_left_end, crack_right_end, domain_bottom_left, do
 #=========================================================================================================================================
 @tf.function
 def true_solution(X):
+    # True solution can be used if precise formula is known, otherwise use approximate solution from FEM as "true" solution
     x = X[:,0:1]
     y = X[:,1:2]
     # choose smooth vector solution
@@ -285,17 +286,17 @@ def true_solution(X):
 
 @tf.function
 def forcing(X, lambda_=1, mu=1, homogeneous=True):
+    # Forcing term corresponding to true solution above
+    # If true_solution is not known, set homogeneous = True for zero forcing
     X = tf.convert_to_tensor(X, dtype=tf.float32)
     tf.ensure_shape(X, [None, 2])
 
     with tf.GradientTape(persistent=True) as g2:
         g2.watch(X)
 
-        # true u and its per-sample Jacobian: (N,2,2)
         u = true_solution(X)
         du = g2.batch_jacobian(u, X)
 
-        # small-strain components, shape (N,1)
         eps_xx = du[:, 0, 0:1]
         eps_yy = du[:, 1, 1:2]
         eps_xy = 0.5 * (du[:, 0, 1:2] + du[:, 1, 0:1])
@@ -305,8 +306,7 @@ def forcing(X, lambda_=1, mu=1, homogeneous=True):
         sigma_yy = lambda_ * trace + 2.0 * mu * eps_yy
         sigma_xy = 2.0 * mu * eps_xy
 
-        # stack σ = [σxx, σxy, σyy] so one jacobian gets every needed partial
-        sigma = tf.concat([sigma_xx, sigma_xy, sigma_yy], axis=1)  # (N,3)
+        sigma = tf.concat([sigma_xx, sigma_xy, sigma_yy], axis=1)  
 
     # J = d sigma / dX has shape (N,3,2): rows map to [σxx, σxy, σyy], cols to [x,y]
     J = g2.batch_jacobian(sigma, X)  # (N,3,2)
@@ -315,10 +315,10 @@ def forcing(X, lambda_=1, mu=1, homogeneous=True):
     # div σ = [∂σxx/∂x + ∂σxy/∂y,  ∂σxy/∂x + ∂σyy/∂y]
     div_x = J[:, 0, 0:1] + J[:, 1, 1:2]
     div_y = J[:, 1, 0:1] + J[:, 2, 1:2]
-    div = tf.concat([div_x, div_y], axis=1)  # (N,2)
+    div = tf.concat([div_x, div_y], axis=1)  
 
     multiplier = 1.0 - tf.cast(homogeneous, tf.float32)  # scalar 0. or 1.
-    f = -div * multiplier  # broadcasted to (N,2)
+    f = -div * multiplier  
 
     return f
 
@@ -327,22 +327,18 @@ def forcing(X, lambda_=1, mu=1, homogeneous=True):
 def residual(X):
     _, _, _, _, _, div_x, div_y = divCGradU(X)
     f = forcing(X)                # (N,2)
-    # r1 = div_x - tf.expand_dims(f[:,0], -1)
-    # r2 = div_y - tf.expand_dims(f[:,1], -1)
     r1 = div_x - tf.expand_dims(f[:, 0], -1)
     r2 = div_y - tf.expand_dims(f[:, 1], -1)
     out = tf.concat([r1, r2], axis=1)  # (N,2)
     return out
 
 def boundary_condition_Dirichlet(X, homogeneous=True):
+    # homogeneous=True :  u_bc = 0
+    # homogeneous=False : u_bc = true_solution(X)
+    #-> set homogeneous = False to use true solution as Dirichlet BC
     tf.ensure_shape(X, [None, 2])
-    
     u_true = true_solution(X)     # (N,2)
-
-    # homogeneous=True  -> u_bc = 0
-    # homogeneous=False -> u_bc = true_solution(X)
     multiplier = 1.0 - tf.cast(homogeneous, tf.float32)  # scalar in {0,1}
-
     return u_true * multiplier   # broadcasts to (N,2)
 
 # traction (true) on top side from true solution: t = sigma_true · n
