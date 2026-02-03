@@ -228,22 +228,34 @@ class PhysicsInformedNN(tf.keras.Model):
         # Neural network for inside crack region
         self.subnet_in  = tf.keras.Sequential([
             tf.keras.layers.Dense(30, activation="tanh"),
+            tf.keras.layers.Dropout(0.1),
             tf.keras.layers.Dense(30, activation="tanh"),
+            tf.keras.layers.Dropout(0.1),
             tf.keras.layers.Dense(30, activation="tanh"),
+            tf.keras.layers.Dropout(0.1),
             tf.keras.layers.Dense(30, activation="tanh"),
+            tf.keras.layers.Dropout(0.1),
             tf.keras.layers.Dense(30, activation="tanh"),
+            tf.keras.layers.Dropout(0.1),
             tf.keras.layers.Dense(30, activation="tanh"),
+            tf.keras.layers.Dropout(0.1),
             tf.keras.layers.Dense(2),
         ])
 
         # Neural network for inside crack region
         self.subnet_out = tf.keras.Sequential([
             tf.keras.layers.Dense(30, activation="tanh"),
+            tf.keras.layers.Dropout(0.1),
             tf.keras.layers.Dense(30, activation="tanh"),
+            tf.keras.layers.Dropout(0.1),
             tf.keras.layers.Dense(30, activation="tanh"),
+            tf.keras.layers.Dropout(0.1),
             tf.keras.layers.Dense(30, activation="tanh"),
+            tf.keras.layers.Dropout(0.1),
             tf.keras.layers.Dense(30, activation="tanh"),
+            tf.keras.layers.Dropout(0.1),
             tf.keras.layers.Dense(30, activation="tanh"),
+            tf.keras.layers.Dropout(0.1),
             tf.keras.layers.Dense(2),
         ])
 
@@ -365,8 +377,6 @@ def true_traction_top(Xb, lambda_=1, mu=1):
 # traction from pinn (used for both top boundary and crack interface)
 @tf.function
 def traction_from_pinn(Xb, normal, lambda_=1, mu=1, overide_traction=None):
-
-
     tf.ensure_shape(Xb, [None,2])
     tf.ensure_shape(normal, [None,2])
     dtype = Xb.dtype
@@ -581,11 +591,9 @@ def sample_boundary_Neumann_right(n, domain_bottom_left0, domain_top_right0):
 # plt.grid(True)
 # plt.show()
 
-
-
 #====================================================== training (Forward problem) =======================================================
 #=========================================================================================================================================
-optimizer = tf.keras.optimizers.Adam(1e-3)
+optimizer = tf.keras.optimizers.Adam(learning_rate=1e-3)
 
 n_interior_point=1000
 n_boudary_point=500
@@ -641,16 +649,45 @@ def train_step_pinn(w_phys=1.0, w_bnd_D=1.0, w_bnd_N=1.0, w_interf_disp = 2.0, w
             loss_data = tf.constant(0.0, dtype=tf.float32)
 
         loss = w_phys*loss_phys + w_bnd_D*loss_bnd_Dirichlet + w_data*loss_data + w_bnd_N*loss_bnd_Neumann + w_interf_disp*loss_interface_displacement + w_interf_tract*loss_interface_traction
-
-
+    
     grads = tape.gradient(loss, pinn.trainable_variables)
     optimizer.apply_gradients(zip(grads, pinn.trainable_variables))
     return loss, loss_phys, loss_bnd_Dirichlet, loss_bnd_Neumann ,loss_interface_displacement, loss_interface_traction
 
 
 
-for epoch in range(10):
+optimizer = tf.keras.optimizers.Adam(learning_rate=1e-3)
+
+factor   = 0.5     # multiply LR by this when plateau
+patience = 20       # epochs with no improvement before reducing
+min_lr   = 1e-9
+threshold = 1e-4   # minimum change to qualify as "improvement"
+cooldown = 10       # optional: epochs to wait after a reduction
+
+best = float("inf")
+wait = 0
+cool = 0
+
+
+for epoch in range(2000):
     loss, lp, lbDirichlet, lbNeumann, lJumpDir, lJumpTrac = train_step_pinn()
+    # ---- LR control based on performance ----
+    if cool > 0:
+        cool -= 1
+    else:
+        improved = (best - loss) > threshold
+        if improved:
+            best = loss
+            wait = 0
+        else:
+            wait += 1
+            if wait >= patience:
+                old_lr = float(optimizer.learning_rate.numpy())
+                new_lr = max(old_lr * factor, min_lr)
+                optimizer.learning_rate.assign(new_lr)
+                wait = 0
+                cool = cooldown
+                print(f"Epoch {epoch}: plateau -> lr {old_lr:.2e} -> {new_lr:.2e}")
     if (epoch+1) % 50 == 0:
         print(f"epoch {epoch+1:04d} | total {loss:.3e} | phys {lp:.3e} | bndDir {lbDirichlet:.3e} | bndNeu {lbNeumann:.3e} | dirJump {lJumpDir:.3e} | tracJump {lJumpTrac:.3e}")
     if loss < 1e-10:
